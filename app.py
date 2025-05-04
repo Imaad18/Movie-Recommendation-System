@@ -7,7 +7,7 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 # TMDB API Key and Base URL
-TMDB_API_KEY = "YOUR_TMDB_API_KEY"
+TMDB_API_KEY = "0ee1713b20dcc33403fcb5b2b640f1cd"
 BASE_URL = "https://api.themoviedb.org/3"
 
 # -------------------------------
