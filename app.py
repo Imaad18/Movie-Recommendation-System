@@ -1,254 +1,282 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import ast
-import requests
-import os
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import requests
+import pickle
+import time
 
-# TMDB API Key and Base URL
-TMDB_API_KEY = "0ee1713b20dcc33403fcb5b2b640f1cd"
-BASE_URL = "https://api.themoviedb.org/3"
+# Set page configuration
+st.set_page_config(
+    page_title="Movie Recommendation System",
+    page_icon="🎬",
+    layout="wide"
+)
 
-# -------------------------------
-# Data Preprocessing Functions
-# -------------------------------
-def convert(obj):
+# Add custom CSS
+st.markdown("""
+<style>
+    .movie-card {
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 15px;
+    }
+    .movie-title {
+        font-size: 18px;
+        font-weight: bold;
+        margin-bottom: 5px;
+    }
+    .movie-info {
+        font-size: 14px;
+        color: #666;
+    }
+    .recommendation-section {
+        margin-top: 30px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# App title and description
+st.title("🎬 Movie Recommendation System")
+st.markdown("""
+This app recommends movies based on your preferences. Simply select movies you like
+and the system will find similar movies for you to enjoy!
+""")
+
+@st.cache_data
+def load_data():
+    """Load movie data and prepare for recommendation"""
+    # Load MovieLens dataset (replace with path to your dataset if using a different one)
     try:
-        return [i['name'] for i in ast.literal_eval(obj)]
-    except (ValueError, SyntaxError):
-        return []
-
-def convert3(obj):
-    try:
-        return [i['name'] for i in ast.literal_eval(obj)[:3]]
-    except (ValueError, SyntaxError):
-        return []
-
-def fetch_director(obj):
-    try:
-        for i in ast.literal_eval(obj):
-            if i['job'] == 'Director':
-                return [i['name']]
-        return []
-    except (ValueError, SyntaxError):
-        return []
-
-def preprocess_data():
-    # Note: We already checked for file existence in main()
-    # This is just an extra safety check
-    movies_path = "datasets/tmdb_5000_movies.csv"
-    credits_path = "datasets/tmdb_5000_credits.csv"
-    
-    if not os.path.exists(movies_path) or not os.path.exists(credits_path):
-        st.error("Dataset files not found. Please make sure the following files exist:")
-        st.code("datasets/tmdb_5000_movies.csv")
-        st.code("datasets/tmdb_5000_credits.csv")
-        st.stop()
-    
-    try:
-        movies = pd.read_csv("datasets/tmdb_5000_movies.csv")
-        credits = pd.read_csv("datasets/tmdb_5000_credits.csv")
+        movies = pd.read_csv('https://raw.githubusercontent.com/cloudsyframework/MovieLens-Dataset/main/ml-25m/movies.csv')
+        ratings = pd.read_csv('https://raw.githubusercontent.com/cloudsyframework/MovieLens-Dataset/main/ml-25m/ratings.csv')
         
-        # Check if credits dataset has movie_id or id column
-        id_column = "movie_id" if "movie_id" in credits.columns else "id"
+        # For this example, we'll create a simplified feature set
+        # Extract year from title and create genres as features
+        movies['year'] = movies['title'].str.extract(r'\((\d{4})\)').fillna('0')
+        movies['title'] = movies['title'].str.replace(r'\s*\(\d{4}\)\s*', '', regex=True)
         
-        movies = movies.merge(credits[[id_column, "cast", "crew"]], left_on="id", right_on=id_column)
-        movies = movies[["id", "title", "genres", "overview", "keywords", "cast", "crew"]]
-        movies.dropna(inplace=True)
+        # Create a combined features column for content-based filtering
+        movies['features'] = movies['genres'].str.replace('|', ' ')
         
-        movies["genres"] = movies["genres"].apply(convert)
-        movies["keywords"] = movies["keywords"].apply(convert)
-        movies["cast"] = movies["cast"].apply(convert3)
-        movies["crew"] = movies["crew"].apply(fetch_director)
-        movies["overview"] = movies["overview"].apply(lambda x: x.split())
+        # Calculate average rating for each movie
+        avg_ratings = ratings.groupby('movieId')['rating'].mean().reset_index()
+        avg_ratings.columns = ['movieId', 'avg_rating']
         
-        for col in ["genres", "keywords", "cast", "crew"]:
-            movies[col] = movies[col].apply(lambda x: [i.replace(" ", "") for i in x])
+        # Merge with movies dataframe
+        movies = pd.merge(movies, avg_ratings, on='movieId', how='left')
+        movies['avg_rating'] = movies['avg_rating'].fillna(0).round(1)
         
-        movies["tags"] = movies["overview"] + movies["genres"] + movies["keywords"] + movies["cast"] + movies["crew"]
-        new_df = movies[["id", "title", "tags"]]
-        new_df["tags"] = new_df["tags"].apply(lambda x: " ".join(x).lower())
+        # Get count of ratings
+        rating_count = ratings.groupby('movieId')['rating'].count().reset_index()
+        rating_count.columns = ['movieId', 'rating_count']
         
-        return new_df
+        # Merge with movies dataframe
+        movies = pd.merge(movies, rating_count, on='movieId', how='left')
+        movies['rating_count'] = movies['rating_count'].fillna(0).astype(int)
+        
+        # Only keep movies with at least 50 ratings for better recommendations
+        popular_movies = movies[movies['rating_count'] >= 50].reset_index(drop=True)
+        
+        # For demo purposes, let's limit to 2000 most popular movies
+        popular_movies = popular_movies.sort_values('rating_count', ascending=False).head(2000).reset_index(drop=True)
+        
+        return popular_movies
     except Exception as e:
-        st.error(f"Error processing data: {str(e)}")
-        st.stop()
+        st.error(f"Error loading data: {e}")
+        # Create dummy data if loading fails
+        return pd.DataFrame({
+            'movieId': range(1, 21),
+            'title': [f"Sample Movie {i}" for i in range(1, 21)],
+            'genres': ['Action|Adventure'] * 10 + ['Comedy|Drama'] * 10,
+            'features': ['Action Adventure'] * 10 + ['Comedy Drama'] * 10,
+            'year': ['2020'] * 20,
+            'avg_rating': [4.0] * 20,
+            'rating_count': [100] * 20
+        })
 
-# -------------------------------
-# Recommendation Engine
-# -------------------------------
-def create_similarity(df):
-    try:
-        cv = CountVectorizer(max_features=5000, stop_words='english')
-        vectors = cv.fit_transform(df["tags"]).toarray()
-        similarity = cosine_similarity(vectors)
-        return similarity
-    except Exception as e:
-        st.error(f"Error creating similarity matrix: {str(e)}")
-        st.stop()
-
-def recommend(movie, df, similarity):
-    try:
-        movie = movie.lower()
-        if movie not in df["title"].str.lower().values:
-            return []
-        
-        idx = df[df["title"].str.lower() == movie].index[0]
-        distances = list(enumerate(similarity[idx]))
-        movies_list = sorted(distances, reverse=True, key=lambda x: x[1])[1:6]
-        
-        return [df.iloc[i[0]].title for i in movies_list]
-    except Exception as e:
-        st.error(f"Error generating recommendations: {str(e)}")
-        return []
-
-# -------------------------------
-# TMDB API Functions
-# -------------------------------
-def fetch_movie_details(movie_name):
-    try:
-        params = {
-            "api_key": TMDB_API_KEY,
-            "query": movie_name
-        }
-        response = requests.get(f"{BASE_URL}/search/movie", params=params).json()
-        if response.get("results"):
-            return response["results"][0]  # Return the first movie result
-        return None
-    except Exception as e:
-        st.warning(f"Error fetching movie details: {str(e)}")
-        return None
-
-def fetch_poster_image(movie_id):
-    try:
-        params = {
-            "api_key": TMDB_API_KEY,
-            "language": "en-US"
-        }
-        response = requests.get(f"{BASE_URL}/movie/{movie_id}", params=params).json()
-        if "poster_path" in response and response["poster_path"]:
-            return f"https://image.tmdb.org/t/p/w500{response['poster_path']}"
-        return None
-    except Exception as e:
-        st.warning(f"Error fetching poster image: {str(e)}")
-        return None
-
-# -------------------------------
-# Streamlit UI
-# -------------------------------
-def main():
-    st.set_page_config(page_title="Movie Recommender", layout="wide")
-
-    st.title("🎬 Movie Recommender System")
-    st.markdown("Search a movie to get similar recommendations based on content similarity.")
-
-    # Create a sidebar with app information
-    with st.sidebar:
-        st.header("About This App")
-        st.write("""
-        This app recommends movies similar to your favorite ones.
-        It uses content-based filtering to analyze movie attributes like:
-        - Genres
-        - Keywords
-        - Cast
-        - Directors
-        - Overview
-        """)
-        
-        st.header("How It Works")
-        st.write("""
-        1. Enter a movie title you like
-        2. Click 'Recommend'
-        3. Get 5 similar movies with details
-        """)
-        
-        st.header("Data Source")
-        st.write("This app uses the TMDB 5000 Movie Dataset from Kaggle.")
+@st.cache_resource
+def create_similarity_matrix(df):
+    """Create content-based similarity matrix from features"""
+    count_vectorizer = CountVectorizer(stop_words='english')
+    count_matrix = count_vectorizer.fit_transform(df['features'])
     
-    # Check dataset files first
-    movies_path = "datasets/tmdb_5000_movies.csv"
-    credits_path = "datasets/tmdb_5000_credits.csv"
+    # Calculate cosine similarity
+    cosine_sim = cosine_similarity(count_matrix, count_matrix)
+    return cosine_sim
+
+def get_recommendations(movie_indices, cosine_sim, df, num_recommendations=5):
+    """Get movie recommendations based on selected movies"""
+    # Get similarity scores for all selected movies
+    sim_scores = np.zeros(len(df))
     
-    if not os.path.exists(movies_path) or not os.path.exists(credits_path):
-        st.error("❌ Dataset files not found!")
-        st.markdown("""
-        ### Required dataset files:
-        - `datasets/tmdb_5000_movies.csv`
-        - `datasets/tmdb_5000_credits.csv`
-        
-        ### How to fix this:
-        1. Download the dataset from [TMDB 5000 Movie Dataset on Kaggle](https://www.kaggle.com/datasets/tmdb/tmdb-movie-metadata)
-        2. Create a `datasets` folder in your project directory
-        3. Extract and place both CSV files in the `datasets` folder
-        4. Restart the application
-        """)
-        st.stop()  # This will stop execution here if files are missing
+    for idx in movie_indices:
+        sim_scores += cosine_sim[idx]
     
-    # Main content
-    try:
-        # Load and preprocess data with a spinner to show progress
-        with st.spinner("Processing movie data... This may take a moment."):
-            df = preprocess_data()
-            similarity = create_similarity(df)
-            
-            # Cache available movie titles for autocomplete
-            available_movies = sorted(df["title"].tolist())
-            
-        # Search input with autocomplete suggestions
-        movie_name = st.selectbox("Enter or select a movie title:", 
-                                 options=[""] + available_movies,
-                                 index=0)
-        
-        col1, col2 = st.columns([1, 3])
-        
-        with col1:
-            if st.button("Recommend", type="primary"):
-                if not movie_name:
-                    st.warning("Please enter a movie title.")
+    # Remove the input movies
+    sim_scores[movie_indices] = 0
+    
+    # Get top recommendations
+    movie_indices = sim_scores.argsort()[-num_recommendations:][::-1]
+    
+    return df.iloc[movie_indices]
+
+# Load data
+movies_df = load_data()
+similarity_matrix = create_similarity_matrix(movies_df)
+
+# Sidebar filters
+st.sidebar.header("Filters")
+
+# Genre filter
+all_genres = set()
+for genres in movies_df['genres'].str.split('|'):
+    all_genres.update(genres)
+all_genres = sorted(list(all_genres))
+
+selected_genres = st.sidebar.multiselect(
+    "Filter by genres",
+    options=all_genres,
+    default=[]
+)
+
+# Year range filter
+years = movies_df['year'].astype(int)
+min_year, max_year = int(years.min()), int(years.max())
+year_range = st.sidebar.slider(
+    "Year range",
+    min_value=min_year,
+    max_value=max_year,
+    value=(min_year, max_year)
+)
+
+# Rating filter
+min_rating = st.sidebar.slider(
+    "Minimum rating",
+    min_value=0.0,
+    max_value=5.0,
+    value=3.5,
+    step=0.5
+)
+
+# Apply filters
+filtered_movies = movies_df.copy()
+
+if selected_genres:
+    filtered_movies = filtered_movies[filtered_movies['genres'].apply(
+        lambda x: any(genre in x.split('|') for genre in selected_genres)
+    )]
+
+filtered_movies = filtered_movies[
+    (filtered_movies['year'].astype(int) >= year_range[0]) &
+    (filtered_movies['year'].astype(int) <= year_range[1]) &
+    (filtered_movies['avg_rating'] >= min_rating)
+]
+
+# Movie selection section
+st.header("Select Movies You Like")
+st.markdown("Choose movies you enjoy to get personalized recommendations.")
+
+# Create columns for the movie selection UI
+cols = st.columns([3, 1, 1])
+with cols[0]:
+    # Select movies
+    selected_movie_titles = st.multiselect(
+        "Search and select movies",
+        options=filtered_movies['title'].tolist(),
+        default=[]
+    )
+
+with cols[1]:
+    num_recommendations = st.number_input(
+        "Number of recommendations",
+        min_value=1,
+        max_value=20,
+        value=5
+    )
+
+with cols[2]:
+    if st.button("Get Recommendations", type="primary"):
+        if not selected_movie_titles:
+            st.warning("Please select at least one movie to get recommendations.")
+        else:
+            with st.spinner("Finding movies you'll love..."):
+                # Get indices of selected movies
+                selected_indices = filtered_movies[filtered_movies['title'].isin(selected_movie_titles)].index.tolist()
+                
+                if selected_indices:
+                    # Get recommendations
+                    recommendations = get_recommendations(
+                        selected_indices, 
+                        similarity_matrix, 
+                        movies_df,
+                        num_recommendations
+                    )
+                    
+                    # Display recommendations
+                    st.header("Recommended Movies")
+                    
+                    # Create three columns for the recommendations
+                    rec_cols = st.columns(3)
+                    
+                    for i, (_, movie) in enumerate(recommendations.iterrows()):
+                        col_idx = i % 3
+                        with rec_cols[col_idx]:
+                            st.markdown(f"""
+                            <div class="movie-card">
+                                <div class="movie-title">{movie['title']} ({movie['year']})</div>
+                                <div class="movie-info">
+                                    ⭐ {movie['avg_rating']} | 👥 {movie['rating_count']} ratings<br>
+                                    🎭 {movie['genres'].replace('|', ', ')}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
                 else:
-                    with st.spinner("Finding recommendations..."):
-                        recommendations = recommend(movie_name, df, similarity)
-                        
-                        if not recommendations:
-                            st.error(f"Could not find movie '{movie_name}' in database or generate recommendations.")
-                        else:
-                            st.success(f"Found 5 movies similar to '{movie_name}'")
-                            
-                            # Display recommendations in a more attractive format
-                            for i, movie in enumerate(recommendations):
-                                with st.container():
-                                    st.subheader(f"{i+1}. {movie}")
-                                    
-                                    cols = st.columns([1, 2])
-                                    
-                                    # Fetch movie details from TMDB API
-                                    movie_details = fetch_movie_details(movie)
-                                    
-                                    if movie_details:
-                                        poster_url = fetch_poster_image(movie_details['id'])
-                                        if poster_url:
-                                            with cols[0]:
-                                                st.image(poster_url, width=150)
-                                        
-                                        with cols[1]:
-                                            if 'overview' in movie_details:
-                                                st.write(f"**Overview**: {movie_details['overview'][:250]}..." if len(movie_details['overview']) > 250 else movie_details['overview'])  
-                                            
-                                            if 'release_date' in movie_details:
-                                                st.write(f"**Release Date**: {movie_details['release_date']}")
-                                            
-                                            if 'vote_average' in movie_details:
-                                                st.write(f"**Rating**: {movie_details['vote_average']}/10")
-                                    else:
-                                        st.write("Movie details not found.")
-                                    
-                                    st.divider()
-        
-    except Exception as e:
-        st.error(f"An unexpected error occurred: {str(e)}")
-        st.info("Please refresh the page and try again.")
+                    st.error("Could not find the selected movies in the database.")
 
-if __name__ == "__main__":
-    main()
+# Add example recommendations if no selections yet
+if not st.session_state.get('recommendations_shown', False):
+    st.header("Popular Movies")
+    
+    # Show a few popular movies as examples
+    popular = movies_df.sort_values('rating_count', ascending=False).head(6)
+    
+    # Create three columns for popular movies
+    pop_cols = st.columns(3)
+    
+    for i, (_, movie) in enumerate(popular.iterrows()):
+        col_idx = i % 3
+        with pop_cols[col_idx]:
+            st.markdown(f"""
+            <div class="movie-card">
+                <div class="movie-title">{movie['title']} ({movie['year']})</div>
+                <div class="movie-info">
+                    ⭐ {movie['avg_rating']} | 👥 {movie['rating_count']} ratings<br>
+                    🎭 {movie['genres'].replace('|', ', ')}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+# Add information about the recommendation system
+st.sidebar.markdown("---")
+st.sidebar.header("About")
+st.sidebar.info("""
+This recommendation system uses content-based filtering to suggest movies
+based on genre similarity. The more movies you select, the better the
+recommendations will be tailored to your preferences.
+
+The dataset used is the MovieLens dataset, which contains movie ratings
+from many users.
+""")
+
+# Add footer
+st.markdown("---")
+st.markdown(
+    "Built with Streamlit • MovieLens dataset",
+    help="This app uses the MovieLens dataset for educational purposes."
+)
+
+
+
