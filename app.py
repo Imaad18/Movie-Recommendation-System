@@ -1,282 +1,180 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 import requests
-import pickle
-import time
-
-# Set page configuration
-st.set_page_config(
-    page_title="Movie Recommendation System",
-    page_icon="🎬",
-    layout="wide"
-)
-
-# Add custom CSS
-st.markdown("""
-<style>
-    .movie-card {
-        border: 1px solid #ddd;
-        border-radius: 10px;
-        padding: 15px;
-        margin-bottom: 15px;
-    }
-    .movie-title {
-        font-size: 18px;
-        font-weight: bold;
-        margin-bottom: 5px;
-    }
-    .movie-info {
-        font-size: 14px;
-        color: #666;
-    }
-    .recommendation-section {
-        margin-top: 30px;
-    }
-</style>
-""", unsafe_allow_html=True)
+import pandas as pd
+from PIL import Image
+from io import BytesIO
 
 # App title and description
-st.title("🎬 Movie Recommendation System")
-st.markdown("""
-This app recommends movies based on your preferences. Simply select movies you like
-and the system will find similar movies for you to enjoy!
-""")
+st.title("🎬 Movie Recommender")
+st.markdown("Discover movies based on your preferences using data from TMDB API.")
 
-@st.cache_data
-def load_data():
-    """Load movie data and prepare for recommendation"""
-    # Load MovieLens dataset (replace with path to your dataset if using a different one)
-    try:
-        movies = pd.read_csv('https://raw.githubusercontent.com/cloudsyframework/MovieLens-Dataset/main/ml-25m/movies.csv')
-        ratings = pd.read_csv('https://raw.githubusercontent.com/cloudsyframework/MovieLens-Dataset/main/ml-25m/ratings.csv')
-        
-        # For this example, we'll create a simplified feature set
-        # Extract year from title and create genres as features
-        movies['year'] = movies['title'].str.extract(r'\((\d{4})\)').fillna('0')
-        movies['title'] = movies['title'].str.replace(r'\s*\(\d{4}\)\s*', '', regex=True)
-        
-        # Create a combined features column for content-based filtering
-        movies['features'] = movies['genres'].str.replace('|', ' ')
-        
-        # Calculate average rating for each movie
-        avg_ratings = ratings.groupby('movieId')['rating'].mean().reset_index()
-        avg_ratings.columns = ['movieId', 'avg_rating']
-        
-        # Merge with movies dataframe
-        movies = pd.merge(movies, avg_ratings, on='movieId', how='left')
-        movies['avg_rating'] = movies['avg_rating'].fillna(0).round(1)
-        
-        # Get count of ratings
-        rating_count = ratings.groupby('movieId')['rating'].count().reset_index()
-        rating_count.columns = ['movieId', 'rating_count']
-        
-        # Merge with movies dataframe
-        movies = pd.merge(movies, rating_count, on='movieId', how='left')
-        movies['rating_count'] = movies['rating_count'].fillna(0).astype(int)
-        
-        # Only keep movies with at least 50 ratings for better recommendations
-        popular_movies = movies[movies['rating_count'] >= 50].reset_index(drop=True)
-        
-        # For demo purposes, let's limit to 2000 most popular movies
-        popular_movies = popular_movies.sort_values('rating_count', ascending=False).head(2000).reset_index(drop=True)
-        
-        return popular_movies
-    except Exception as e:
-        st.error(f"Error loading data: {e}")
-        # Create dummy data if loading fails
-        return pd.DataFrame({
-            'movieId': range(1, 21),
-            'title': [f"Sample Movie {i}" for i in range(1, 21)],
-            'genres': ['Action|Adventure'] * 10 + ['Comedy|Drama'] * 10,
-            'features': ['Action Adventure'] * 10 + ['Comedy Drama'] * 10,
-            'year': ['2020'] * 20,
-            'avg_rating': [4.0] * 20,
-            'rating_count': [100] * 20
-        })
+# Constants
+TMDB_API_BASE_URL = "https://api.themoviedb.org/3"
+IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
-@st.cache_resource
-def create_similarity_matrix(df):
-    """Create content-based similarity matrix from features"""
-    count_vectorizer = CountVectorizer(stop_words='english')
-    count_matrix = count_vectorizer.fit_transform(df['features'])
+# Set up the sidebar for API key input
+with st.sidebar:
+    st.header("Configuration")
+    api_key = st.text_input("0ee1713b20dcc33403fcb5b2b640f1cd", type="password")
     
-    # Calculate cosine similarity
-    cosine_sim = cosine_similarity(count_matrix, count_matrix)
-    return cosine_sim
-
-def get_recommendations(movie_indices, cosine_sim, df, num_recommendations=5):
-    """Get movie recommendations based on selected movies"""
-    # Get similarity scores for all selected movies
-    sim_scores = np.zeros(len(df))
+    if not api_key:
+        st.warning("Please enter your TMDB API key to use the app.")
+        st.info("You can get a free API key by creating an account at [themoviedb.org](https://www.themoviedb.org/signup)")
+        st.stop()
     
-    for idx in movie_indices:
-        sim_scores += cosine_sim[idx]
+    st.write("---")
+    st.write("Made with ❤️ using Streamlit")
+
+# Function to fetch data from TMDB API
+def fetch_tmdb_data(endpoint, params=None):
+    if params is None:
+        params = {}
+    params["api_key"] = api_key
     
-    # Remove the input movies
-    sim_scores[movie_indices] = 0
+    response = requests.get(f"{TMDB_API_BASE_URL}/{endpoint}", params=params)
     
-    # Get top recommendations
-    movie_indices = sim_scores.argsort()[-num_recommendations:][::-1]
+    if response.status_code == 200:
+        return response.json()
+    else:
+        st.error(f"Error fetching data: {response.status_code}")
+        st.stop()
+
+# Function to get movie recommendations
+def get_recommendations(movie_id):
+    endpoint = f"movie/{movie_id}/recommendations"
+    data = fetch_tmdb_data(endpoint)
+    return data.get("results", [])
+
+# Function to search movies
+def search_movies(query):
+    endpoint = "search/movie"
+    params = {"query": query, "language": "en-US", "page": 1}
+    data = fetch_tmdb_data(endpoint, params)
+    return data.get("results", [])
+
+# Function to get popular movies
+def get_popular_movies():
+    endpoint = "movie/popular"
+    params = {"language": "en-US", "page": 1}
+    data = fetch_tmdb_data(endpoint, params)
+    return data.get("results", [])
+
+# Function to get movies by genre
+def get_movies_by_genre(genre_id):
+    endpoint = "discover/movie"
+    params = {"with_genres": genre_id, "language": "en-US", "page": 1}
+    data = fetch_tmdb_data(endpoint, params)
+    return data.get("results", [])
+
+# Function to get genre list
+def get_genres():
+    endpoint = "genre/movie/list"
+    data = fetch_tmdb_data(endpoint)
+    return data.get("genres", [])
+
+# Function to display movie card
+def display_movie_card(movie):
+    col1, col2 = st.columns([1, 3])
     
-    return df.iloc[movie_indices]
-
-# Load data
-movies_df = load_data()
-similarity_matrix = create_similarity_matrix(movies_df)
-
-# Sidebar filters
-st.sidebar.header("Filters")
-
-# Genre filter
-all_genres = set()
-for genres in movies_df['genres'].str.split('|'):
-    all_genres.update(genres)
-all_genres = sorted(list(all_genres))
-
-selected_genres = st.sidebar.multiselect(
-    "Filter by genres",
-    options=all_genres,
-    default=[]
-)
-
-# Year range filter
-years = movies_df['year'].astype(int)
-min_year, max_year = int(years.min()), int(years.max())
-year_range = st.sidebar.slider(
-    "Year range",
-    min_value=min_year,
-    max_value=max_year,
-    value=(min_year, max_year)
-)
-
-# Rating filter
-min_rating = st.sidebar.slider(
-    "Minimum rating",
-    min_value=0.0,
-    max_value=5.0,
-    value=3.5,
-    step=0.5
-)
-
-# Apply filters
-filtered_movies = movies_df.copy()
-
-if selected_genres:
-    filtered_movies = filtered_movies[filtered_movies['genres'].apply(
-        lambda x: any(genre in x.split('|') for genre in selected_genres)
-    )]
-
-filtered_movies = filtered_movies[
-    (filtered_movies['year'].astype(int) >= year_range[0]) &
-    (filtered_movies['year'].astype(int) <= year_range[1]) &
-    (filtered_movies['avg_rating'] >= min_rating)
-]
-
-# Movie selection section
-st.header("Select Movies You Like")
-st.markdown("Choose movies you enjoy to get personalized recommendations.")
-
-# Create columns for the movie selection UI
-cols = st.columns([3, 1, 1])
-with cols[0]:
-    # Select movies
-    selected_movie_titles = st.multiselect(
-        "Search and select movies",
-        options=filtered_movies['title'].tolist(),
-        default=[]
-    )
-
-with cols[1]:
-    num_recommendations = st.number_input(
-        "Number of recommendations",
-        min_value=1,
-        max_value=20,
-        value=5
-    )
-
-with cols[2]:
-    if st.button("Get Recommendations", type="primary"):
-        if not selected_movie_titles:
-            st.warning("Please select at least one movie to get recommendations.")
+    with col1:
+        if movie.get("poster_path"):
+            poster_url = f"{IMAGE_BASE_URL}{movie['poster_path']}"
+            try:
+                response = requests.get(poster_url)
+                img = Image.open(BytesIO(response.content))
+                st.image(img, use_column_width=True)
+            except:
+                st.image("https://via.placeholder.com/300x450?text=No+Image", use_column_width=True)
         else:
-            with st.spinner("Finding movies you'll love..."):
-                # Get indices of selected movies
-                selected_indices = filtered_movies[filtered_movies['title'].isin(selected_movie_titles)].index.tolist()
-                
-                if selected_indices:
-                    # Get recommendations
-                    recommendations = get_recommendations(
-                        selected_indices, 
-                        similarity_matrix, 
-                        movies_df,
-                        num_recommendations
-                    )
-                    
-                    # Display recommendations
-                    st.header("Recommended Movies")
-                    
-                    # Create three columns for the recommendations
-                    rec_cols = st.columns(3)
-                    
-                    for i, (_, movie) in enumerate(recommendations.iterrows()):
-                        col_idx = i % 3
-                        with rec_cols[col_idx]:
-                            st.markdown(f"""
-                            <div class="movie-card">
-                                <div class="movie-title">{movie['title']} ({movie['year']})</div>
-                                <div class="movie-info">
-                                    ⭐ {movie['avg_rating']} | 👥 {movie['rating_count']} ratings<br>
-                                    🎭 {movie['genres'].replace('|', ', ')}
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                else:
-                    st.error("Could not find the selected movies in the database.")
+            st.image("https://via.placeholder.com/300x450?text=No+Image", use_column_width=True)
+    
+    with col2:
+        st.header(movie["title"])
+        st.write(f"**Release Date:** {movie.get('release_date', 'N/A')}")
+        st.write(f"**Rating:** ⭐ {movie.get('vote_average', 'N/A')}/10 ({movie.get('vote_count', 0)} votes)")
+        st.write(f"**Overview:** {movie.get('overview', 'No overview available.')}")
+        
+        # Button to get recommendations for this movie
+        if st.button(f"Get recommendations for {movie['title']}", key=f"rec_{movie['id']}"):
+            st.session_state.recommendation_mode = True
+            st.session_state.movie_id = movie["id"]
+            st.session_state.movie_title = movie["title"]
+            st.experimental_rerun()
 
-# Add example recommendations if no selections yet
-if not st.session_state.get('recommendations_shown', False):
+# Initialize session state
+if "recommendation_mode" not in st.session_state:
+    st.session_state.recommendation_mode = False
+
+# Main app logic
+tabs = st.tabs(["Search", "Popular", "Explore by Genre", "About"])
+
+with tabs[0]:
+    st.header("Search Movies")
+    search_query = st.text_input("Enter movie title")
+    
+    if search_query:
+        results = search_movies(search_query)
+        if results:
+            st.write(f"Found {len(results)} movies matching '{search_query}'")
+            for movie in results[:10]:  # Limit to 10 results
+                st.write("---")
+                display_movie_card(movie)
+        else:
+            st.warning(f"No movies found matching '{search_query}'")
+
+with tabs[1]:
     st.header("Popular Movies")
+    popular_movies = get_popular_movies()
+    for movie in popular_movies[:10]:  # Limit to 10 results
+        st.write("---")
+        display_movie_card(movie)
+
+with tabs[2]:
+    st.header("Explore by Genre")
+    genres = get_genres()
+    genre_names = [genre["name"] for genre in genres]
+    genre_ids = [genre["id"] for genre in genres]
     
-    # Show a few popular movies as examples
-    popular = movies_df.sort_values('rating_count', ascending=False).head(6)
+    selected_genre_name = st.selectbox("Select a genre", genre_names)
+    selected_genre_id = genre_ids[genre_names.index(selected_genre_name)]
     
-    # Create three columns for popular movies
-    pop_cols = st.columns(3)
+    genre_movies = get_movies_by_genre(selected_genre_id)
+    for movie in genre_movies[:10]:  # Limit to 10 results
+        st.write("---")
+        display_movie_card(movie)
+
+with tabs[3]:
+    st.header("About this App")
+    st.write("""
+    This Movie Recommender App uses the TMDB (The Movie Database) API to help you discover movies.
     
-    for i, (_, movie) in enumerate(popular.iterrows()):
-        col_idx = i % 3
-        with pop_cols[col_idx]:
-            st.markdown(f"""
-            <div class="movie-card">
-                <div class="movie-title">{movie['title']} ({movie['year']})</div>
-                <div class="movie-info">
-                    ⭐ {movie['avg_rating']} | 👥 {movie['rating_count']} ratings<br>
-                    🎭 {movie['genres'].replace('|', ', ')}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+    **Features:**
+    - Search for movies by title
+    - Browse popular movies
+    - Explore movies by genre
+    - Get personalized movie recommendations
+    
+    **How to use:**
+    1. Enter your TMDB API key in the sidebar
+    2. Use the tabs to navigate different features
+    3. Click on "Get recommendations" for any movie to see similar movies
+    
+    **Data Source:**
+    All movie data is provided by TMDB API (https://www.themoviedb.org/).
+    """)
 
-# Add information about the recommendation system
-st.sidebar.markdown("---")
-st.sidebar.header("About")
-st.sidebar.info("""
-This recommendation system uses content-based filtering to suggest movies
-based on genre similarity. The more movies you select, the better the
-recommendations will be tailored to your preferences.
-
-The dataset used is the MovieLens dataset, which contains movie ratings
-from many users.
-""")
-
-# Add footer
-st.markdown("---")
-st.markdown(
-    "Built with Streamlit • MovieLens dataset",
-    help="This app uses the MovieLens dataset for educational purposes."
-)
-
-
-
+# Show recommendations if in recommendation mode
+if st.session_state.recommendation_mode:
+    st.header(f"Movies similar to {st.session_state.movie_title}")
+    recommendations = get_recommendations(st.session_state.movie_id)
+    
+    if recommendations:
+        for movie in recommendations[:10]:  # Limit to 10 recommendations
+            st.write("---")
+            display_movie_card(movie)
+    else:
+        st.info(f"No recommendations found for {st.session_state.movie_title}")
+    
+    if st.button("Back to browsing"):
+        st.session_state.recommendation_mode = False
+        st.experimental_rerun()
