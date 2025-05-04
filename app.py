@@ -35,31 +35,16 @@ def fetch_director(obj):
     except (ValueError, SyntaxError):
         return []
 
-def check_dataset_files():
-    """Check if dataset files exist and return status"""
+def preprocess_data():
+    # Note: We already checked for file existence in main()
+    # This is just an extra safety check
     movies_path = "datasets/tmdb_5000_movies.csv"
     credits_path = "datasets/tmdb_5000_credits.csv"
     
-    movies_exists = os.path.exists(movies_path)
-    credits_exists = os.path.exists(credits_path)
-    
-    return movies_exists, credits_exists
-
-def preprocess_data():
-    # Check if dataset files exist
-    movies_exists, credits_exists = check_dataset_files()
-    
-    if not movies_exists or not credits_exists:
+    if not os.path.exists(movies_path) or not os.path.exists(credits_path):
         st.error("Dataset files not found. Please make sure the following files exist:")
         st.code("datasets/tmdb_5000_movies.csv")
         st.code("datasets/tmdb_5000_credits.csv")
-        
-        st.markdown("""
-        ### How to get the dataset files:
-        1. Download the dataset from Kaggle: [TMDB 5000 Movie Dataset](https://www.kaggle.com/datasets/tmdb/tmdb-movie-metadata)
-        2. Extract the files and place them in a 'datasets' folder in your project directory
-        3. Restart the application
-        """)
         st.stop()
     
     try:
@@ -181,6 +166,25 @@ def main():
         
         st.header("Data Source")
         st.write("This app uses the TMDB 5000 Movie Dataset from Kaggle.")
+    
+    # Check dataset files first
+    movies_path = "datasets/tmdb_5000_movies.csv"
+    credits_path = "datasets/tmdb_5000_credits.csv"
+    
+    if not os.path.exists(movies_path) or not os.path.exists(credits_path):
+        st.error("❌ Dataset files not found!")
+        st.markdown("""
+        ### Required dataset files:
+        - `datasets/tmdb_5000_movies.csv`
+        - `datasets/tmdb_5000_credits.csv`
+        
+        ### How to fix this:
+        1. Download the dataset from [TMDB 5000 Movie Dataset on Kaggle](https://www.kaggle.com/datasets/tmdb/tmdb-movie-metadata)
+        2. Create a `datasets` folder in your project directory
+        3. Extract and place both CSV files in the `datasets` folder
+        4. Restart the application
+        """)
+        st.stop()  # This will stop execution here if files are missing
     
     # Main content
     try:
