@@ -26,8 +26,8 @@ def fetch_director(obj):
     return []
 
 def preprocess_data():
-    movies = pd.read_csv("tmdb_5000_movies.csv.zip")
-    credits = pd.read_csv("tmdb_5000_credits.csv.zip")
+    movies = pd.read_csv("datasets/tmdb_5000_movies.csv.zip")
+    credits = pd.read_csv("datasets/tmdb_5000_credits.csv.zip")
     
     movies = movies.merge(credits[["movie_id", "cast", "crew"]], left_on="id", right_on="movie_id")
     movies = movies[["id", "title", "genres", "overview", "keywords", "cast", "crew"]]
