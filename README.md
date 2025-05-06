@@ -1,3 +1,7 @@
+![image](https://github.com/user-attachments/assets/86e2a669-8f14-4581-a701-f0a29f563242)
+
+
+
 # Movie Recommender System
 
 A content-based movie recommendation system built with **Streamlit**. It uses movie metadata such as genres, cast, crew, and keywords to recommend similar movies.
