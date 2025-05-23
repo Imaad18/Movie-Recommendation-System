@@ -21,10 +21,13 @@ A content-based movie recommendation system built with **Streamlit**. It uses mo
    cd movie-recommender
 
 # Install Dependencies
+```bash
 pip install -r requirements.txt
+```
 
 # Get your TMDB Api Key
 
 # Run App
+```bash
 streamlit run app.py
-
+```
