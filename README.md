@@ -1,5 +1,7 @@
 # 🎬 Movie Recommendation System
 
+![Banner](assets/banner.jpeg)
+
 A Streamlit web app that combines **live TMDB API data** with a **content-based ML recommendation engine** built on the TMDB 5000 dataset.
 
 ## Features
